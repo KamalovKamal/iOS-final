@@ -1,51 +1,38 @@
 import Foundation
 
-final class SpotifyAPI {
+final class NetworkService {
 
-    static let shared = SpotifyAPI()
-    
-
-    private let accessToken = "BQD3dDQ6HZjf26DARJqISkDlKUiMm1gDUVKXJQgvaPmevyv4QlprRjNN-7KOvPDpcaUa0M-g4Tk0iVZHQAzofJGsCbVsO-q1CH-TXGHJCbvt6wtgz0bBBczjNUGIUZh9Dw7PtC_-wQY"
+    static let shared = NetworkService()
 
     func searchTracks(query: String, completion: @escaping ([Track]) -> Void) {
+        
+        // 1. Используем iTunes API (оно бесплатное и надежное)
+        guard let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://itunes.apple.com/search?term=\(encodedQuery)&media=music&entity=song&limit=20") else {
+            return
+        }
 
-        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!
-        let urlString = "https://api.spotify.com/v1/search?q=\(encodedQuery)&type=track&limit=20"
-
-        guard let url = URL(string: urlString) else { return }
-
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-
-        URLSession.shared.dataTask(with: request) { data, _, error in
+        URLSession.shared.dataTask(with: url) { data, _, error in
             guard let data = data, error == nil else { return }
 
             do {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                let tracksJSON = (json?["tracks"] as? [String: Any])?["items"] as? [[String: Any]] ?? []
+                let results = json?["results"] as? [[String: Any]] ?? []
 
-                var result: [Track] = []
+                var tracks: [Track] = []
 
-                for item in tracksJSON {
-
-                    // Название
-                    let title = item["name"] as? String ?? ""
-
-                    // Длительность
-                    let duration = item["duration_ms"] as? Int ?? 0
-
-                    // Preview URL
-                    let preview = item["preview_url"] as? String
-                    let previewURL = preview != nil ? URL(string: preview!) : nil
-
-                    // Артист
-                    let artists = item["artists"] as? [[String: Any]]
-                    let artist = artists?.first?["name"] as? String ?? ""
-
-                    // Картинка
-                    let album = item["album"] as? [String: Any]
-                    let images = album?["images"] as? [[String: Any]]
-                    let imageString = images?.first?["url"] as? String
+                for item in results {
+                    // Парсинг под iTunes формат
+                    let title = item["trackName"] as? String ?? ""
+                    let artist = item["artistName"] as? String ?? ""
+                    let duration = item["trackTimeMillis"] as? Int ?? 0
+                    
+                    // iTunes ВСЕГДА дает previewUrl
+                    let previewString = item["previewUrl"] as? String
+                    let previewURL = previewString != nil ? URL(string: previewString!) : nil
+                    
+                    // Картинка (берем качество получше, меняем 100x100 на 600x600 в ссылке)
+                    let imageString = (item["artworkUrl100"] as? String)?.replacingOccurrences(of: "100x100", with: "600x600")
                     let imageURL = imageString != nil ? URL(string: imageString!) : nil
 
                     let track = Track(
@@ -55,17 +42,15 @@ final class SpotifyAPI {
                         previewURL: previewURL,
                         imageURL: imageURL
                     )
-
-                    result.append(track)
+                    tracks.append(track)
                 }
 
                 DispatchQueue.main.async {
-                    completion(result)
+                    completion(tracks)
                 }
 
             } catch {
-                print("JSON parsing error:", error)
-                
+                print("Error parsing: \(error)")
             }
         }.resume()
     }
